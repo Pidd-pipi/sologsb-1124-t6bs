@@ -14,6 +14,7 @@ import type { Cover, FrankingItem } from '@/types/cover'
 import { CONDITION_GRADES, createEmptyCover } from '@/types/cover'
 import { clearDraft, loadDraft, saveDraft } from '@/utils/draft'
 import { joinCn, nowIso, toNumber } from '@/utils/id'
+import { checkEndpoints, endpointConflictMessage } from '@/utils/routeMatch'
 
 const router = useRouter()
 const coverStore = useCoverStore()
@@ -129,6 +130,16 @@ async function submit(): Promise<void> {
   if (!form.franking.length) {
     ElMessage.warning('至少登记一条贴票构成')
     return
+  }
+  if (typeof form.routeId === 'number') {
+    const picked = routeStore.byId(form.routeId)
+    if (picked) {
+      const conflict = checkEndpoints(form, picked)
+      if (conflict) {
+        ElMessage.error(endpointConflictMessage(conflict))
+        return
+      }
+    }
   }
   const coverNo = form.coverNo || coverStore.nextCoverNo()
   const id = await coverStore.create(

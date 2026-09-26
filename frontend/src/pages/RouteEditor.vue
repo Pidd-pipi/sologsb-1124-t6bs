@@ -11,6 +11,7 @@ import type { PostalRoute, RouteNode, TimelineNode } from '@/types/route'
 import { TRANSPORT_MODES, createEmptyRoute } from '@/types/route'
 import { toGanzhi, validateChronology } from '@/utils/dateRange'
 import { nowIso } from '@/utils/id'
+import { checkEndpoints, endpointConflictMessage } from '@/utils/routeMatch'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -192,6 +193,14 @@ async function attachCover(): Promise<void> {
   const coverId = selectedCoverId.value
   if (id == null || coverId == null) {
     ElMessage.warning('请选择要挂到此邮路的实寄封')
+    return
+  }
+  const target = coverStore.byId(coverId)
+  const current = route.value
+  if (!target || !current) return
+  const conflict = checkEndpoints(target, current)
+  if (conflict) {
+    ElMessage.error(endpointConflictMessage(conflict))
     return
   }
   await coverStore.update(coverId, { routeId: id })

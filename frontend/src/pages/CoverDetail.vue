@@ -21,6 +21,7 @@ import {
 import { CONDITION_GRADES } from '@/types/cover'
 import { loadAssets, saveAsset } from '@/utils/db'
 import { nowIso } from '@/utils/id'
+import { calibrateEndpointDates, endpointConflictMessage } from '@/utils/routeMatch'
 
 const props = defineProps<{ id: string }>()
 const router = useRouter()
@@ -33,8 +34,18 @@ const coverId = computed<number | null>(() => {
   return Number.isFinite(n) && n > 0 ? n : null
 })
 
-const { cover, route, timeline, transitDays, missingDateNodes, chronological, error, load } =
-  useCoverRoute(coverId)
+const {
+  cover,
+  route,
+  timeline,
+  transitDays,
+  missingDateNodes,
+  chronological,
+  endpointConflict,
+  endpointDiffs,
+  error,
+  load
+} = useCoverRoute(coverId)
 
 const frontUrl = ref('')
 const backUrl = ref('')
@@ -199,6 +210,16 @@ function backToList(): void {
 function openRoute(): void {
   if (route.value?.id != null) void router.push(`/routes/${route.value.id}`)
 }
+
+/** 一键校准：只把邮路首末节点日期改为封上日期，中间中转节点保持原样 */
+async function calibrateRouteDates(): Promise<void> {
+  const c = cover.value
+  const r = route.value
+  if (!c || !r || r.id == null || !endpointDiffs.value.length) return
+  await routeStore.update(r.id, { nodes: calibrateEndpointDates(c, r) })
+  await load()
+  ElMessage.success('已按封上日期校准邮路首末节点，中转节点未改动')
+}
 </script>
 
 <template>
@@ -284,12 +305,36 @@ function openRoute(): void {
 
       <section class="gb-panel">
         <h2 class="gb-panel__title">寄递事实时间轴</h2>
-        <p v-if="!chronological" class="cover-detail__warn">
-          日期先后有误：请核对寄出、中转与到达日期的顺序。
+        <p v-if="endpointConflict" class="cover-detail__warn cover-detail__warn--error">
+          起讫点核对未通过：{{ endpointConflictMessage(endpointConflict) }}。时间轴节点与本封并不对应，请勿据此写考证记录，请摘除或改挂邮路。
         </p>
-        <p v-else-if="missingDateNodes.length" class="cover-detail__warn">
-          缺日警示：{{ missingDateNodes.map((n) => n.office).join('、') }} 尚未确定日期。
-        </p>
+        <template v-else>
+          <div v-if="endpointDiffs.length" class="cover-detail__diff">
+            <p class="cover-detail__diff-title">
+              起讫点一致，但首末节点日期与封上日期有 {{ endpointDiffs.length }} 处差异：
+            </p>
+            <ul class="cover-detail__diff-list">
+              <li v-for="d in endpointDiffs" :key="d.side">
+                <span class="cover-detail__diff-node">
+                  {{ d.side === 'start' ? '首节点（寄出）' : '末节点（到达）' }} · {{ d.office }}
+                </span>
+                <span class="cover-detail__diff-route">{{ d.routeDate || '日期待考' }}</span>
+                <span class="cover-detail__diff-arrow">→</span>
+                <span class="cover-detail__diff-cover">{{ d.coverDate }}</span>
+              </li>
+            </ul>
+            <p class="cover-detail__diff-hint">校准仅改邮路首、末节点日期，中间中转节点保持原样。</p>
+            <el-button size="small" type="primary" plain @click="calibrateRouteDates">
+              按封上日期校准邮路首末日期
+            </el-button>
+          </div>
+          <p v-if="!chronological" class="cover-detail__warn">
+            日期先后有误：请核对寄出、中转与到达日期的顺序。
+          </p>
+          <p v-else-if="missingDateNodes.length" class="cover-detail__warn">
+            缺日警示：{{ missingDateNodes.map((n) => n.office).join('、') }} 尚未确定日期。
+          </p>
+        </template>
         <RouteTimeline :nodes="timeline" @select="onTimelineSelect" />
       </section>
 
@@ -434,6 +479,57 @@ function openRoute(): void {
   border: 1px solid #ecd3a5;
   border-radius: 8px;
   padding: 6px 10px;
+}
+.cover-detail__warn--error {
+  color: #a13426;
+  background: #fbeeea;
+  border-color: #e0b3a8;
+}
+.cover-detail__diff {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #6f5f49;
+  background: #fdf5e6;
+  border: 1px solid #ecd3a5;
+  border-radius: 8px;
+}
+.cover-detail__diff-title {
+  margin: 0 0 6px;
+  color: #b06f16;
+}
+.cover-detail__diff-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+.cover-detail__diff-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.cover-detail__diff-node {
+  color: #5d3325;
+  min-width: 150px;
+}
+.cover-detail__diff-route {
+  color: #a13426;
+  text-decoration: line-through;
+}
+.cover-detail__diff-arrow {
+  color: #8a7860;
+}
+.cover-detail__diff-cover {
+  color: #2f6b44;
+  font-weight: 600;
+}
+.cover-detail__diff-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--gb-muted);
 }
 .cover-detail__section-head {
   display: flex;

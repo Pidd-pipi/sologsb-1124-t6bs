@@ -7,6 +7,12 @@ import { db } from '@/utils/db'
 import type { Cover } from '@/types/cover'
 import type { PostalRoute, TimelineNode } from '@/types/route'
 import { daysBetween, isValidDate } from '@/utils/dateRange'
+import {
+  checkEndpoints,
+  endpointDateDiffs,
+  type EndpointConflict,
+  type EndpointDateDiff
+} from '@/utils/routeMatch'
 
 /** 由封与邮路拼时间轴：寄出 → 中转（邮路节点 / 中转地） → 到达。 */
 export function buildTimeline(cover: Cover | null, route: PostalRoute | null): TimelineNode[] {
@@ -122,5 +128,29 @@ export function useCoverRoute(coverId: Ref<number | null> | ComputedRef<number |
     return true
   })
 
-  return { cover, route, timeline, transitDays, missingDateNodes, chronological, loading, error, load }
+  /** 已挂邮路与封的起讫点冲突（历史遗留错挂在此暴露，正常挂接入口已拦截） */
+  const endpointConflict = computed<EndpointConflict | null>(() => {
+    if (!cover.value || !route.value) return null
+    return checkEndpoints(cover.value, route.value)
+  })
+
+  /** 起讫点一致时，首末节点日期与封上日期的差异列表 */
+  const endpointDiffs = computed<EndpointDateDiff[]>(() => {
+    if (!cover.value || !route.value || endpointConflict.value) return []
+    return endpointDateDiffs(cover.value, route.value)
+  })
+
+  return {
+    cover,
+    route,
+    timeline,
+    transitDays,
+    missingDateNodes,
+    chronological,
+    endpointConflict,
+    endpointDiffs,
+    loading,
+    error,
+    load
+  }
 }
