@@ -19,6 +19,12 @@ import {
   createEmptyStampEntry
 } from '@/types/stampentry'
 import { CONDITION_GRADES } from '@/types/cover'
+import {
+  checkRouteLink,
+  dateMismatchText,
+  endpointLabel,
+  endpointPlaceLabel
+} from '@/utils/routeLink'
 import { loadAssets, saveAsset } from '@/utils/db'
 import { nowIso } from '@/utils/id'
 
@@ -188,6 +194,37 @@ const cancelPostmarks = computed<Postmark[]>(() =>
     .filter((pm): pm is Postmark => pm != null)
 )
 
+/** 已挂邮路与封上事实的核对结果（起讫点冲突 / 首末日期差异） */
+const routeLinkCheck = computed(() =>
+  cover.value && route.value ? checkRouteLink(cover.value, route.value) : null
+)
+
+function linkConflictText(conflict: {
+  endpoint: 'start' | 'end'
+  coverPlace: string
+  nodePlace: string
+}): string {
+  const coverPlace = conflict.coverPlace.trim() || '（待考）'
+  const nodePlace = conflict.nodePlace.trim() || '（待补）'
+  return `${endpointLabel(conflict.endpoint)}冲突：封上${endpointPlaceLabel(
+    conflict.endpoint
+  )}为「${coverPlace}」，邮路节点为「${nodePlace}」，时间轴节点可能与本封不对应，录入考证时请勿直接采信。`
+}
+
+async function alignRouteDates(): Promise<void> {
+  const c = cover.value
+  const rt = route.value
+  if (!c || rt == null || typeof rt.id !== 'number') return
+  const targetRouteId = rt.id
+  const changed = await routeStore.alignEndpointNodeDates(targetRouteId, c)
+  await load()
+  if (changed > 0) {
+    ElMessage.success('已把邮路首末节点日期校准为封上日期，中间中转节点保持原样')
+  } else {
+    ElMessage.info('没有可校准的差异')
+  }
+}
+
 function onTimelineSelect(node: TimelineNode): void {
   if (node.kind === 'transit') ElMessage.info(`中转节点：${node.office}（${node.mark}）`)
 }
@@ -290,6 +327,39 @@ function openRoute(): void {
         <p v-else-if="missingDateNodes.length" class="cover-detail__warn">
           缺日警示：{{ missingDateNodes.map((n) => n.office).join('、') }} 尚未确定日期。
         </p>
+        <template v-if="routeLinkCheck && !routeLinkCheck.hasNodes">
+          <p class="cover-detail__conflict">
+            所属邮路「{{ route?.routeNo }} {{ route?.name }}」尚无节点，无法核对起讫点。
+          </p>
+        </template>
+        <template v-else-if="routeLinkCheck && !routeLinkCheck.endpointsMatched">
+          <p
+            v-for="conflict in routeLinkCheck.endpointConflicts"
+            :key="conflict.endpoint"
+            class="cover-detail__conflict"
+          >
+            {{ linkConflictText(conflict) }}
+          </p>
+        </template>
+        <template v-else-if="routeLinkCheck && routeLinkCheck.dateMismatches.length">
+          <div class="cover-detail__datediff">
+            <p class="cover-detail__datediff-title">
+              起讫点一致，但邮路首末节点日期与封上日期存在
+              {{ routeLinkCheck.dateMismatches.length }} 处差异：
+            </p>
+            <ul class="cover-detail__datediff-list">
+              <li v-for="item in routeLinkCheck.dateMismatches" :key="item.endpoint">
+                {{ dateMismatchText(item) }}
+              </li>
+            </ul>
+            <p class="cover-detail__datediff-hint">
+              可将邮路首末节点日期校准为封上日期，中间中转节点保持原样。
+            </p>
+            <el-button size="small" type="warning" plain @click="alignRouteDates">
+              校准邮路首末日期
+            </el-button>
+          </div>
+        </template>
         <RouteTimeline :nodes="timeline" @select="onTimelineSelect" />
       </section>
 
@@ -434,6 +504,40 @@ function openRoute(): void {
   border: 1px solid #ecd3a5;
   border-radius: 8px;
   padding: 6px 10px;
+}
+.cover-detail__conflict {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #a33a28;
+  background: #fcebe7;
+  border: 1px solid #e4b3a8;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.cover-detail__datediff {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: #8a5a16;
+  background: #fdf5e6;
+  border: 1px solid #ecd3a5;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.cover-detail__datediff-title {
+  margin: 0 0 6px;
+  font-weight: 600;
+}
+.cover-detail__datediff-list {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+.cover-detail__datediff-list li {
+  margin: 2px 0;
+}
+.cover-detail__datediff-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--gb-muted);
 }
 .cover-detail__section-head {
   display: flex;

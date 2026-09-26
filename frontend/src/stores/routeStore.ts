@@ -1,8 +1,10 @@
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { db } from '@/utils/db'
+import type { Cover } from '@/types/cover'
 import type { PostalRoute, RouteNode } from '@/types/route'
 import { daysBetween, isValidDate } from '@/utils/dateRange'
+import { alignEndpointDates } from '@/utils/routeLink'
 import { nextSerialNo, nowIso, uid } from '@/utils/id'
 
 /** 由节点日期计算全程天数：取首个与末个有效日期的间隔。 */
@@ -91,6 +93,20 @@ export const useRouteStore = defineStore('route', () => {
     await update(id, { nodes: route.nodes.filter((n) => n.key !== key) })
   }
 
+  /**
+   * 按封上寄出 / 到达日期校准邮路首末节点日期，中间中转节点保持原样。
+   * 封上日期待考的一端不改写；返回实际发生改动的端数。
+   */
+  async function alignEndpointNodeDates(routeId: number, cover: Cover): Promise<number> {
+    const current = byId(routeId)
+    if (!current || current.nodes.length === 0) return 0
+    const nextNodes = alignEndpointDates(current.nodes, cover)
+    const changed = nextNodes.filter((n, i) => n.arriveDate !== current.nodes[i].arriveDate).length
+    if (changed === 0) return 0
+    await update(routeId, { nodes: nextNodes })
+    return changed
+  }
+
   function byId(id: number | null | undefined): PostalRoute | null {
     if (id == null) return null
     return list.value.find((r) => r.id === id) ?? null
@@ -117,6 +133,7 @@ export const useRouteStore = defineStore('route', () => {
     moveNode,
     addNode,
     removeNode,
+    alignEndpointNodeDates,
     byId,
     missingDateCount
   }

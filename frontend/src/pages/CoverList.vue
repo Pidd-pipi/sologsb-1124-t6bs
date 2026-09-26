@@ -12,6 +12,7 @@ import { useRouteStore } from '@/stores/routeStore'
 import type { ImagePayload } from '@/stores/postmarkStore'
 import type { Cover, FrankingItem } from '@/types/cover'
 import { CONDITION_GRADES, createEmptyCover } from '@/types/cover'
+import { checkRouteLink, dateMismatchText, linkConflictMessage } from '@/utils/routeLink'
 import { clearDraft, loadDraft, saveDraft } from '@/utils/draft'
 import { joinCn, nowIso, toNumber } from '@/utils/id'
 
@@ -130,6 +131,21 @@ async function submit(): Promise<void> {
     ElMessage.warning('至少登记一条贴票构成')
     return
   }
+  // 挂接前先核对起讫点：地点对不上直接拒绝；首末日期差异允许保留，详情页再校准。
+  let dateMismatchCount = 0
+  let dateMismatchHint = ''
+  if (typeof form.routeId === 'number') {
+    const targetRoute = routeStore.byId(form.routeId)
+    if (targetRoute) {
+      const linkCheck = checkRouteLink(form, targetRoute)
+      if (!linkCheck.hasNodes || !linkCheck.endpointsMatched) {
+        ElMessage.error(linkConflictMessage(linkCheck))
+        return
+      }
+      dateMismatchCount = linkCheck.dateMismatches.length
+      dateMismatchHint = linkCheck.dateMismatches.map((item) => dateMismatchText(item)).join('；')
+    }
+  }
   const coverNo = form.coverNo || coverStore.nextCoverNo()
   const id = await coverStore.create(
     {
@@ -146,7 +162,13 @@ async function submit(): Promise<void> {
   clearDraft('cover')
   draftHint.value = ''
   dialogVisible.value = false
-  ElMessage.success(`已登记实寄封 ${coverNo}`)
+  if (dateMismatchCount > 0) {
+    ElMessage.warning(
+      `已登记 ${coverNo} 并挂接邮路，但首末节点日期有 ${dateMismatchCount} 处差异：${dateMismatchHint}，可在详情页校准。`
+    )
+  } else {
+    ElMessage.success(`已登记实寄封 ${coverNo}`)
+  }
   await router.push(`/covers/${id}`)
 }
 

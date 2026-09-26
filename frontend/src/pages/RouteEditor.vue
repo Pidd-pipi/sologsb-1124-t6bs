@@ -10,6 +10,14 @@ import type { Cover } from '@/types/cover'
 import type { PostalRoute, RouteNode, TimelineNode } from '@/types/route'
 import { TRANSPORT_MODES, createEmptyRoute } from '@/types/route'
 import { toGanzhi, validateChronology } from '@/utils/dateRange'
+import {
+  checkRouteLink,
+  dateMismatchText,
+  endpointLabel,
+  endpointPlaceLabel,
+  linkConflictMessage,
+  type EndpointConflict
+} from '@/utils/routeLink'
 import { nowIso } from '@/utils/id'
 
 const props = defineProps<{ id: string }>()
@@ -71,6 +79,30 @@ const coverOptions = computed(() =>
       : []
   )
 )
+
+/** 当前下拉选中的封（可能已挂或未挂） */
+const selectedCover = computed<Cover | null>(
+  () => coverStore.byId(selectedCoverId.value) ?? null
+)
+
+/** 挂接前核对：起讫点是否对得上、首末日期有无差异 */
+const attachCheck = computed(() =>
+  selectedCover.value && route.value
+    ? checkRouteLink(selectedCover.value, route.value)
+    : null
+)
+
+const attachBlocked = computed(
+  () => !attachCheck.value?.hasNodes || !attachCheck.value.endpointsMatched
+)
+
+function conflictText(conflict: EndpointConflict): string {
+  const coverPlace = conflict.coverPlace.trim() || '（待考）'
+  const nodePlace = conflict.nodePlace.trim() || '（待补）'
+  return `${endpointLabel(conflict.endpoint)}冲突：封上${endpointPlaceLabel(
+    conflict.endpoint
+  )}为「${coverPlace}」，邮路节点为「${nodePlace}」`
+}
 
 /** 未挂邮路时，用封的中转地拼出参考时间轴 */
 const fallbackTimeline = computed<TimelineNode[]>(() => {
@@ -194,8 +226,22 @@ async function attachCover(): Promise<void> {
     ElMessage.warning('请选择要挂到此邮路的实寄封')
     return
   }
+  const target = coverStore.byId(coverId)
+  const current = route.value
+  if (!target || !current) return
+  const check = checkRouteLink(target, current)
+  if (!check.hasNodes || !check.endpointsMatched) {
+    ElMessage.error(linkConflictMessage(check))
+    return
+  }
   await coverStore.update(coverId, { routeId: id })
-  ElMessage.success('实寄封已挂到该邮路')
+  if (check.dateMismatches.length) {
+    ElMessage.warning(
+      `已挂接，但首末节点日期与封上日期有 ${check.dateMismatches.length} 处差异，请在封详情页核对或校准。`
+    )
+  } else {
+    ElMessage.success('实寄封已挂到该邮路')
+  }
 }
 
 async function detachCover(cover: Cover): Promise<void> {
@@ -344,7 +390,43 @@ function nodeGanzhi(node: RouteNode): string {
               :value="opt.value"
             />
           </el-select>
-          <el-button type="primary" @click="attachCover">挂到此邮路</el-button>
+          <el-button type="primary" :disabled="attachBlocked" @click="attachCover">
+            挂到此邮路
+          </el-button>
+        </div>
+        <div v-if="attachCheck" class="route-editor__linkcheck">
+          <template v-if="!attachCheck.hasNodes">
+            <p class="route-editor__linkconflict">
+              该邮路尚无节点，无法核对起讫点，请先补录节点后再挂接。
+            </p>
+          </template>
+          <template v-else-if="!attachCheck.endpointsMatched">
+            <p
+              v-for="conflict in attachCheck.endpointConflicts"
+              :key="conflict.endpoint"
+              class="route-editor__linkconflict"
+            >
+              {{ conflictText(conflict) }}
+            </p>
+          </template>
+          <template v-else>
+            <p v-if="!attachCheck.dateMismatches.length" class="route-editor__linkok">
+              起讫点与首末日期均与封上事实一致，可直接挂接。
+            </p>
+            <template v-else>
+              <p class="route-editor__linkwarn">
+                起讫点一致，但首末节点日期与封上日期有
+                {{ attachCheck.dateMismatches.length }} 处差异，挂接后请在封详情页校准：
+              </p>
+              <p
+                v-for="item in attachCheck.dateMismatches"
+                :key="item.endpoint"
+                class="route-editor__linkwarn"
+              >
+                · {{ dateMismatchText(item) }}
+              </p>
+            </template>
+          </template>
         </div>
         <p v-if="!attachedCovers.length" class="gb-empty">该邮路尚未挂任何实寄封。</p>
         <ul v-else class="route-editor__covers">
@@ -462,6 +544,30 @@ function nodeGanzhi(node: RouteNode): string {
   align-items: center;
   flex-wrap: wrap;
   margin-bottom: 10px;
+}
+.route-editor__linkcheck {
+  margin: 0 0 10px;
+}
+.route-editor__linkcheck p {
+  margin: 4px 0;
+  font-size: 13px;
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+.route-editor__linkconflict {
+  color: #a33a28;
+  background: #fcebe7;
+  border: 1px solid #e4b3a8;
+}
+.route-editor__linkwarn {
+  color: #8a5a16;
+  background: #fdf5e6;
+  border: 1px solid #ecd3a5;
+}
+.route-editor__linkok {
+  color: #3f6b35;
+  background: #eef4ec;
+  border: 1px solid #b9cdb0;
 }
 .route-editor__covers {
   list-style: none;
